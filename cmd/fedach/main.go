@@ -7,20 +7,23 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/urfave/cli/v2"
+	fedach "github.com/moov-io/fedach"
+	"github.com/urfave/cli/v3"
 
 	"github.com/moov-io/fedach/pkg/ack"
 )
 
 func main() {
-	app := &cli.App{
-		Name:  "fedach",
-		Usage: "FedACH and FedPayments Reporter file inspection tools",
+	root := &cli.Command{
+		Name:    "fedach",
+		Usage:   "FedACH and FedPayments Reporter file inspection tools",
+		Version: fedach.Version,
 		Description: `fedach is a Swiss Army knife for the various report files produced
 by the Federal Reserve's FedPayments Reporter service.
 
@@ -30,21 +33,21 @@ It inspects the file extension and routes to the appropriate parser
 			parseCommand(),
 		},
 		// Allow `fedach somefile.ack` as a convenient shorthand for
-		// `fedach parse somefile.ack`.
-		Action: func(c *cli.Context) error {
-			if c.NArg() > 0 {
-				f := c.Args().First()
+		// `fedach parse somefile.ack` when the argument is a file we support.
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			if cmd.NArg() > 0 {
+				f := cmd.Args().First()
 				// Only treat it as a file if it looks like one that exists
 				// or has a known extension. Otherwise fall through to help.
 				if _, err := os.Stat(f); err == nil || hasKnownExtension(f) {
 					return runParse(f)
 				}
 			}
-			return cli.ShowAppHelp(c)
+			return cli.ShowAppHelp(cmd)
 		},
 	}
 
-	if err := app.Run(os.Args); err != nil {
+	if err := root.Run(context.Background(), os.Args); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(1)
 	}
@@ -62,11 +65,11 @@ records / lines it contains.
 
 Currently supported extensions:
   .ack   - FedACH FAHK Acknowledgement of ACH File Deposits reports`,
-		Action: func(c *cli.Context) error {
-			if c.NArg() < 1 {
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			if cmd.NArg() < 1 {
 				return fmt.Errorf("parse requires a file argument (e.g. fedach parse report.ack)")
 			}
-			return runParse(c.Args().First())
+			return runParse(cmd.Args().First())
 		},
 	}
 }
