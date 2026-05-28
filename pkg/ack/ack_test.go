@@ -95,10 +95,10 @@ func TestSplit_ErrorBlocks(t *testing.T) {
 
 func TestFindErrorBlocks(t *testing.T) {
 	cases := []struct {
-		name            string
-		inputFilepath   string
-		wantFileCount   int
-		wantBatchCount  int
+		name           string
+		inputFilepath  string
+		wantFileCount  int
+		wantBatchCount int
 		// Optional: expected leading error codes for the first record of each block.
 		// Use this to verify we detected the right errors without hard-coding messy raw content.
 		fileErrorCodes  []string // e.g. "ITH145", "IFH239"
@@ -109,11 +109,11 @@ func TestFindErrorBlocks(t *testing.T) {
 		batchSnippets [][]string
 	}{
 		{
-			name:           "file with two file-level errors and one batch error",
-			inputFilepath:  filepath.Join("..", "..", "testdata", "ack", "raw", "ACHFAHK673960043AIN202605261654134.ack"),
-			wantFileCount:  2,
-			wantBatchCount: 1,
-			fileErrorCodes: []string{"ITH145", "IFH239"},
+			name:            "file with two file-level errors and one batch error",
+			inputFilepath:   filepath.Join("..", "..", "testdata", "ack", "raw", "ACHFAHK673960043AIN202605261654134.ack"),
+			wantFileCount:   2,
+			wantBatchCount:  1,
+			fileErrorCodes:  []string{"ITH145", "IFH239"},
 			batchErrorCodes: []string{"WBH232"},
 			fileSnippets: [][]string{
 				{"TH145", "SENDING ELECTRONIC CONNECTION OWNER"},
@@ -139,6 +139,19 @@ func TestFindErrorBlocks(t *testing.T) {
 				"IFC168", "IFC014", "IFC016", "IFC015", "IFC018",
 			},
 			batchErrorCodes: []string{"WBH073", "WBH021", "WBH074"},
+		},
+		{
+			name:           "file with clipped error messages",
+			inputFilepath:  filepath.Join("..", "..", "testdata", "ack", "raw", "ACHFAHK673960043AIN202605281447969.ack"),
+			wantFileCount:  2,
+			wantBatchCount: 1,
+			fileSnippets: [][]string{
+				{"FH012", "INVALID IMMEDIATE ORIGIN ON FILE HEADER (NOT ON ACD) IMMEDIATE ORIGIN = 073923156"},
+				{"TH145", "SENDING ELECTRONIC CONNECTION OWNER NOT AUTHORIZED TO SEND ACH FILE SENDING ELECTRONIC CONNECTION OWNER = SECO ID = G-C005C5"},
+			},
+			batchSnippets: [][]string{
+				{"BH033", "INVALID ORIGINATING DFI IDENTIFICATION ON BATCH HEADER ORIGINATING DFI ON BATCH HEADER = 073923156 ON BATCH NUMBER 0000001"},
+			},
 		},
 	}
 

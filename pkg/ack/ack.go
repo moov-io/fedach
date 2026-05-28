@@ -473,7 +473,14 @@ func Split(data []byte) []Record {
 	//      for the known error-block letters I, J, K, W, X, Y. These frequently
 	//      appear with shallower indentation in the original layout.
 	// ---------------------------------------------------------------------
-	const normalMinIndent = 15
+	const (
+		normalMinIndent      = 15
+		// errorLetterMinIndent guards against false-positive detection of I/J/K/W/X/Y
+		// inside ALL-CAPS English text in error messages (e.g. "IMMEDIATE", "IDENTIFICATION",
+		// "ID = ...", "WITH ..."). Real structural tags in our corpus have at least 3
+		// spaces of indent; 1-space occurrences inside text are always false positives.
+		errorLetterMinIndent = 2
+	)
 
 	var recStarts []int
 
@@ -504,7 +511,7 @@ func Split(data []byte) []Record {
 			isErrorLetter := letter == 'I' || letter == 'J' || letter == 'K' ||
 				letter == 'W' || letter == 'X' || letter == 'Y'
 
-			if isErrorLetter || indent >= normalMinIndent {
+			if (isErrorLetter && indent >= errorLetterMinIndent) || indent >= normalMinIndent {
 				recStarts = append(recStarts, k)
 			}
 		}
