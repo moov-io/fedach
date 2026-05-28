@@ -115,6 +115,7 @@ func SplitLines(data []byte) []string {
 			}
 			out = append(out, s)
 		}
+		//nolint:dupword
 		// Drop trailing blank lines (the many final Z Z Z ... in the examples).
 		for len(out) > 0 && out[len(out)-1] == "" {
 			out = out[:len(out)-1]
