@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestSplit_BasicStructure(t *testing.T) {
@@ -88,6 +90,110 @@ func TestSplit_ErrorBlocks(t *testing.T) {
 		if first != 'W' && first != 'X' && first != 'Y' {
 			t.Errorf("batchErrs[%d] starts with %c, want W/X/Y", i, first)
 		}
+	}
+}
+
+func TestFindErrorBlocks(t *testing.T) {
+	cases := []struct {
+		name            string
+		inputFilepath   string
+		wantFileCount   int
+		wantBatchCount  int
+		// Optional: expected leading error codes for the first record of each block.
+		// Use this to verify we detected the right errors without hard-coding messy raw content.
+		fileErrorCodes  []string // e.g. "ITH145", "IFH239"
+		batchErrorCodes []string // e.g. "WBH232"
+		// Optional: human-readable formatted text we expect FormatErrorBlock to produce
+		// (substrings to check for; keeps the test robust across minor formatting tweaks).
+		fileSnippets  [][]string
+		batchSnippets [][]string
+	}{
+		{
+			name:           "file with two file-level errors and one batch error",
+			inputFilepath:  filepath.Join("..", "..", "testdata", "ack", "raw", "ACHFAHK673960043AIN202605261654134.ack"),
+			wantFileCount:  2,
+			wantBatchCount: 1,
+			fileErrorCodes: []string{"ITH145", "IFH239"},
+			batchErrorCodes: []string{"WBH232"},
+			fileSnippets: [][]string{
+				{"TH145", "SENDING ELECTRONIC CONNECTION OWNER"},
+				{"FH239", "INVALID SENDING POINT"},
+			},
+			batchSnippets: [][]string{
+				{"BH232", "INVALID ORIGINATING DFI"},
+			},
+		},
+		{
+			name:           "file with no errors",
+			inputFilepath:  filepath.Join("..", "..", "testdata", "ack", "raw", "achfahk691000134ain20200512085211052.ack"),
+			wantFileCount:  0,
+			wantBatchCount: 0,
+		},
+		{
+			name:           "file with many file and batch errors",
+			inputFilepath:  filepath.Join("..", "..", "testdata", "ack", "raw", "achfahk691000134ain20200512085211959.ack"),
+			wantFileCount:  10,
+			wantBatchCount: 3,
+			fileErrorCodes: []string{
+				"IFC104", "IFH004", "IFH005", "IFH025", "IFC009",
+				"IFC168", "IFC014", "IFC016", "IFC015", "IFC018",
+			},
+			batchErrorCodes: []string{"WBH073", "WBH021", "WBH074"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			bs, err := os.ReadFile(tc.inputFilepath)
+			require.NoError(t, err)
+
+			records := Split(bs)
+			require.NotEmpty(t, records)
+
+			fileErrors, batchErrors := FindErrorBlocks(records)
+
+			require.Equal(t, tc.wantFileCount, len(fileErrors), "file error block count")
+			require.Equal(t, tc.wantBatchCount, len(batchErrors), "batch error block count")
+
+			// Verify leading error codes on file blocks (first record of each block).
+			for i, code := range tc.fileErrorCodes {
+				if i >= len(fileErrors) {
+					t.Fatalf("missing file error block %d for code %s", i, code)
+				}
+				first := fileErrors[i][0]
+				require.Equal(t, byte('I'), first.Prefix)
+				require.Contains(t, string(first.Content), code)
+			}
+
+			for i, code := range tc.batchErrorCodes {
+				if i >= len(batchErrors) {
+					t.Fatalf("missing batch error block %d for code %s", i, code)
+				}
+				first := batchErrors[i][0]
+				require.Equal(t, byte('W'), first.Prefix)
+				require.Contains(t, string(first.Content), code)
+			}
+
+			// Verify FormatErrorBlock produces readable output containing the expected snippets.
+			for i, snippets := range tc.fileSnippets {
+				if i >= len(fileErrors) {
+					continue
+				}
+				text := FormatErrorBlock(fileErrors[i])
+				for _, snip := range snippets {
+					require.Contains(t, text, snip, "file error %d formatted text", i)
+				}
+			}
+			for i, snippets := range tc.batchSnippets {
+				if i >= len(batchErrors) {
+					continue
+				}
+				text := FormatErrorBlock(batchErrors[i])
+				for _, snip := range snippets {
+					require.Contains(t, text, snip, "batch error %d formatted text", i)
+				}
+			}
+		})
 	}
 }
 
