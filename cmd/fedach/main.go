@@ -166,7 +166,14 @@ func handleAckReport(data []byte, path string) error {
 	if len(fileErrs) > 0 || len(batchErrs) > 0 {
 		fmt.Printf("\n=== Error Blocks Detected ===\n")
 		fmt.Printf("  File-level errors (I/J/K/Z): %d\n", len(fileErrs))
+		for _, fileErr := range fileErrs {
+			fmt.Printf("    %s\n", ack.FormatErrorBlock(fileErr))
+		}
+
 		fmt.Printf("  Batch-level errors (W/X/Y/Z): %d\n", len(batchErrs))
+		for _, batchErr := range batchErrs {
+			fmt.Printf("    %s\n", ack.FormatErrorBlock(batchErr))
+		}
 	}
 
 	return nil
