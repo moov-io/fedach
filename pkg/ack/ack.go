@@ -37,6 +37,8 @@ type Record struct {
 	Content []byte
 }
 
+const reportHeader = "AJ001A01A08052"
+
 // SplitLines reconstructs the original visual report lines from a raw FAHK ack file.
 //
 // Unlike Split (which extracts the tagged A/B/C/I/J/K... logical records), SplitLines
@@ -60,6 +62,64 @@ type Record struct {
 func SplitLines(data []byte) []string {
 	if len(data) == 0 {
 		return nil
+	}
+
+	// Pretty-printed path for the Fed's official documentation examples
+	// (file-level-example, file-multi-batch-level-example, etc.). These
+	// contain one physical \n per visual report row (150+ newlines) plus
+	// leading "N" or "NN" line number markers and the tag letters.
+	// Splitting on the original newlines gives exact visual fidelity after
+	// the standard per-line tag stripping and Z removal. This avoids the
+	// complex indent heuristics needed for the flattened production format.
+	if bytes.Count(data, []byte{'\n'})+bytes.Count(data, []byte{'\r'}) > 10 {
+		rawLines := bytes.Split(data, []byte{'\n'})
+		var out []string
+		for _, ln := range rawLines {
+			ln = bytes.TrimRight(ln, "\r \t")
+			orig := string(ln)
+			s := strings.TrimLeft(orig, " \t")
+			// hadDigitMarker: for the 1-9 header rows in the pretty docs examples,
+			// the digit itself is the line-type indicator; the following text
+			// (SERVICING, FILE, IMMEDIATE, etc.) is payload and must not have its
+			// first letter stripped.
+			hadDigitMarker := false
+			if len(s) > 0 && isDigit(s[0]) {
+				hadDigitMarker = true
+				j := 1
+				if j < len(s) && isDigit(s[j]) {
+					j++
+				}
+				if j < len(s) {
+					s = s[j:]
+				} else {
+					s = ""
+				}
+				s = strings.TrimLeft(s, " \t")
+			}
+			// Strip the leading tag letter (A-Z) *only* for lines that did not
+			// have a digit marker. Those letter-starting lines (GFILE, IBH501,
+			// MBATCH, VBATCH, D BATCHES, AFILE, BFILE, etc.) use the letter as
+			// the hidden indicator per the Fed format spec; stripping reveals
+			// the human-readable content. The AJ001... report header is kept.
+			if !hadDigitMarker && len(s) > 0 && isUpperLetter(s[0]) {
+				isReportHeader := len(s) >= 14 && s[:14] == reportHeader
+				if !isReportHeader {
+					s = s[1:]
+				}
+			}
+			// Remove any trailing Z (and digit markers if any were left).
+			s = removeTrailingMarker(s)
+			// Skip pure orphaned single-digit marker remnants.
+			if len(s) == 1 && isDigit(s[0]) {
+				continue
+			}
+			out = append(out, s)
+		}
+		// Drop trailing blank lines (the many final Z Z Z ... in the examples).
+		for len(out) > 0 && out[len(out)-1] == "" {
+			out = out[:len(out)-1]
+		}
+		return out
 	}
 
 	// Normalize line endings to space for uniform scanning.
@@ -209,11 +269,31 @@ func SplitLines(data []byte) []string {
 	//    long error reports (new "page" in the middle of file-level or batch
 	//    errors). We must cut here so the header is emitted as its own line and
 	//    subsequent content is attributed correctly.
-	const reportHeader = "AJ001A01A08052"
+	//
+	//    Per FedACH_CIPS_Requirements.pdf (pages 7-8): in a multi-page
+	//    acknowledgement, all page headers except the initial page header are
+	//    followed by a 'Z' line. We force an extra cut at the first Z after a
+	//    non-initial header so the header block is emitted separately and the
+	//    structural 'Z' produces a clean boundary (the Z itself is stripped
+	//    later by removeTrailingMarker, as it is never visible content).
+	firstReportHeaderSeen := false
 	for i := 0; i <= n-len(reportHeader); i++ {
 		if stream[i] == 'A' {
 			if string(stream[i:i+len(reportHeader)]) == reportHeader {
 				cuts = append(cuts, i)
+				if firstReportHeaderSeen {
+					// Per FedACH_CIPS_Requirements.pdf (p. 7-8): non-initial
+					// page headers are followed by a 'Z' line. Force a cut at
+					// the first Z after the header so the header block ends
+					// cleanly (the Z is stripped later).
+					for k := i + len(reportHeader); k < n && k < i+500; k++ {
+						if stream[k] == 'Z' || stream[k] == 'z' {
+							cuts = append(cuts, k+1)
+							break
+						}
+					}
+				}
+				firstReportHeaderSeen = true
 			}
 		}
 	}
@@ -287,7 +367,7 @@ func SplitLines(data []byte) []string {
 			keepLeading := isFirstLine && len(rest) > 2 && rest[0] == 'J' && isDigit(rest[1])
 			isMarkerStart := markerCut[c]
 			// Protect any occurrence of the distinctive report header line.
-			isReportHeader := len(segment) >= 14 && string(segment[:14]) == "AJ001A01A08052"
+			isReportHeader := len(segment) >= 14 && string(segment[:14]) == reportHeader
 			if !keepLeading && !isMarkerStart && !isReportHeader {
 				segment = rest
 			}
@@ -474,7 +554,7 @@ func Split(data []byte) []Record {
 	//      appear with shallower indentation in the original layout.
 	// ---------------------------------------------------------------------
 	const (
-		normalMinIndent      = 15
+		normalMinIndent = 15
 		// errorLetterMinIndent guards against false-positive detection of I/J/K/W/X/Y
 		// inside ALL-CAPS English text in error messages (e.g. "IMMEDIATE", "IDENTIFICATION",
 		// "ID = ...", "WITH ..."). Real structural tags in our corpus have at least 3
