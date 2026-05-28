@@ -19,6 +19,7 @@ package ack
 
 import (
 	"bytes"
+	"regexp"
 	"strings"
 	"unicode"
 )
@@ -619,6 +620,20 @@ func isWhitespace(b byte) bool {
 	return b == ' ' || b == '\t' || unicode.IsSpace(rune(b))
 }
 
+// errorCodePrefix matches the start of a real error record (I or W).
+// Real errors have codes like IFC104, IFH004, ITH145, WBH232, etc.
+// immediately after the I or W tag letter.
+var errorCodePrefix = regexp.MustCompile(`^[IW][A-Z]{1,3}\d{3}`)
+
+// isErrorStarter reports whether r is an I or W record that begins a
+// genuine error block (i.e. carries a recognizable FedACH error code).
+func isErrorStarter(r Record) bool {
+	if r.Prefix != 'I' && r.Prefix != 'W' {
+		return false
+	}
+	return errorCodePrefix.Match(r.Content)
+}
+
 // RecordsByPrefix returns a map from prefix letter to all records having that prefix.
 // This is useful for quickly locating error records (I, J, K, W, X, Y) or summary
 // records (A, B, C, ...).
@@ -651,8 +666,8 @@ func FindErrorBlocks(recs []Record) (fileErrors, batchErrors [][]Record) {
 	for i < len(recs) {
 		r := recs[i]
 
-		if r.Prefix == 'I' || r.Prefix == 'J' || r.Prefix == 'K' {
-			// Start of a file-level error block.
+		if isErrorStarter(r) && r.Prefix == 'I' {
+			// Start of a file-level error block (real error code only).
 			block := []Record{r}
 			j := i + 1
 			for j < len(recs) {
@@ -687,13 +702,14 @@ func FindErrorBlocks(recs []Record) (fileErrors, batchErrors [][]Record) {
 			continue
 		}
 
-		if r.Prefix == 'W' || r.Prefix == 'X' || r.Prefix == 'Y' {
-			// Start of a batch-level error block.
+		if isErrorStarter(r) && r.Prefix == 'W' {
+			// Start of a batch-level error block (real error code only).
 			block := []Record{r}
 			j := i + 1
 			for j < len(recs) {
 				p := recs[j].Prefix
-				if p == 'W' || p == 'X' || p == 'Y' {
+				if p == 'W' || p == 'X' || p == 'Y' || p == 'I' || p == 'J' || p == 'K' {
+					// Include common continuation letters seen inside batch error blocks.
 					block = append(block, recs[j])
 					j++
 					continue
@@ -724,4 +740,58 @@ func FindErrorBlocks(recs []Record) (fileErrors, batchErrors [][]Record) {
 	}
 
 	return fileErrors, batchErrors
+}
+
+// FormatErrorBlock returns a single human-readable string for an error block
+// (as returned by FindErrorBlocks). It strips the leading I/J/K/W/X/Y/Z tag
+// letters (when they are clearly tags and not part of the payload word, e.g.
+// "ID" or "INC."), collapses runs of whitespace, and joins the pieces with
+// spaces. The result is suitable for inclusion in error messages, logs, or
+// Slack alerts.
+//
+// Example output:
+//
+//	"TH145-SENDING ELECTRONIC CONNECTION OWNER NOT AUTHORIZED TO SEND ACH FILE SENDING ELECTRONIC CONNECTION OWNER = SECO ID = G-C005C5"
+func FormatErrorBlock(block []Record) string {
+	if len(block) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, r := range block {
+		s := string(r.Content)
+		if len(s) > 0 {
+			first := s[0]
+			if (first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z') {
+				rest := s[1:]
+				// Do not strip when the payload legitimately starts with the
+				// same letter as a tag (common collisions: "ID", "INC.", "IN ...").
+				// These appear in J/I/X/Y continuation records inside error blocks.
+				keep := false
+				if len(s) >= 2 {
+					prefix2 := s[:2]
+					if prefix2 == "ID" || prefix2 == "id" || prefix2 == "IN" || prefix2 == "in" {
+						keep = true
+					}
+				}
+				if len(s) >= 3 {
+					prefix3 := s[:3]
+					if prefix3 == "INC" || prefix3 == "inc" {
+						keep = true
+					}
+				}
+				if !keep {
+					s = rest
+				}
+			}
+		}
+		s = strings.TrimSpace(s)
+		if s != "" {
+			parts = append(parts, s)
+		}
+	}
+	// Join with single spaces, then collapse any runs of internal whitespace
+	// down to single spaces for compactness in alerts.
+	joined := strings.Join(parts, " ")
+	collapsed := strings.Join(strings.Fields(joined), " ")
+	return collapsed
 }
