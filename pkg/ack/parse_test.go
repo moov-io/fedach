@@ -22,6 +22,16 @@ func TestParseFileTotals(t *testing.T) {
 			want: FileTotals{Batches: 1, Entries: 1, DebitTotal: 0, CreditTotal: 32145},
 		},
 		{
+			name: "production file pended with file-level errors",
+			file: "ACHFAHK673960043AIN202608121530761.ack",
+			want: FileTotals{Batches: 1, Entries: 2, DebitTotal: 101, CreditTotal: 101},
+		},
+		{
+			name: "production file accepted with no errors",
+			file: "ACHFAHK673960043AIN202608121534803.ack",
+			want: FileTotals{Batches: 1, Entries: 2, DebitTotal: 101, CreditTotal: 101},
+		},
+		{
 			name: "production file with 1 batch (variant)",
 			file: "ACHFAHK673960043AIN202605281447969.ack",
 			want: FileTotals{Batches: 1, Entries: 1, DebitTotal: 0, CreditTotal: 32145},
