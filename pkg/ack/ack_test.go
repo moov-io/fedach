@@ -130,6 +130,23 @@ func TestFindErrorBlocks(t *testing.T) {
 			wantBatchCount: 0,
 		},
 		{
+			name:           "file pended with two file-level errors",
+			inputFilepath:  filepath.Join("..", "..", "testdata", "ack", "raw", "ACHFAHK673960043AIN202608121530761.ack"),
+			wantFileCount:  2,
+			wantBatchCount: 0,
+			fileErrorCodes: []string{"IFH238", "IFH239"},
+			fileSnippets: [][]string{
+				{"FH238", "INVALID IMMEDIATE ORIGIN NOT AUTHORIZED AS A SENDING POINT", "IMMEDIATE ORIGIN = 073923156"},
+				{"FH239", "INVALID SENDING POINT", "TH SEND ABA OR NODE OWNER 673960043 NOT AUTHZD FOR IMMED ORIGIN 073923156"},
+			},
+		},
+		{
+			name:           "file accepted with no errors",
+			inputFilepath:  filepath.Join("..", "..", "testdata", "ack", "raw", "ACHFAHK673960043AIN202608121534803.ack"),
+			wantFileCount:  0,
+			wantBatchCount: 0,
+		},
+		{
 			name:           "file with many file and batch errors",
 			inputFilepath:  filepath.Join("..", "..", "testdata", "ack", "raw", "achfahk691000134ain20200512085211959.ack"),
 			wantFileCount:  10,
