@@ -126,10 +126,19 @@ func parseAmount(s string) (int64, error) {
 		} else if len(cenStr) > 2 {
 			cenStr = cenStr[:2]
 		}
-		dol, _ := strconv.Atoi(dolStr)
-		cen, _ := strconv.Atoi(cenStr)
+		dol, err := strconv.Atoi(dolStr)
+		if err != nil {
+			return 0, fmt.Errorf("parsing dollars %q: %w", dolStr, err)
+		}
+		cen, err := strconv.Atoi(cenStr)
+		if err != nil {
+			return 0, fmt.Errorf("parsing cents %q: %w", cenStr, err)
+		}
 		return int64(dol)*100 + int64(cen), nil
 	}
-	dol, _ := strconv.Atoi(s)
+	dol, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, fmt.Errorf("parsing dollars %q: %w", s, err)
+	}
 	return int64(dol) * 100, nil
 }
