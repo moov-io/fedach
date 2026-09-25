@@ -85,3 +85,13 @@ func TestParseFileTotals_Empty(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, FileTotals{}, got)
 }
+
+func TestParseAmountRejectsNonNumericDollars(t *testing.T) {
+	_, err := parseAmount("abc.50")
+	require.Error(t, err)
+	_, err = parseAmount("12x")
+	require.Error(t, err)
+	got, err := parseAmount("10.50")
+	require.NoError(t, err)
+	require.Equal(t, int64(1050), got)
+}
