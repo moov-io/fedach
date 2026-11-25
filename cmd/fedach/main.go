@@ -20,12 +20,24 @@ import (
 )
 
 func main() {
+	// go install and a plain go build do not stamp fedach.Version.
+	// urfave/cli only registers --version when Version is non-empty,
+	// so fall back to "dev" in that case. make build and goreleaser
+	// still overwrite fedach.Version via ldflags.
+	version := fedach.Version
+	if version == "" {
+		version = "dev"
+	}
+
 	root := &cli.Command{
 		Name:    "fedach",
-		Usage:   "FedACH and FedPayments Reporter file inspection tools",
-		Version: fedach.Version,
-		Description: `fedach is a Swiss Army knife for the various report files produced
-by the Federal Reserve's FedPayments Reporter service.
+		Usage:   "FedPayments Reporter FAHK/ACK file inspection tools",
+		Version: version,
+		Description: `fedach inspects FedPayments Reporter FAHK/ACK acknowledgement
+reports (Acknowledgement of ACH File Deposits).
+
+It does not look up or validate ACH routing numbers. For the FedACH
+participant directory, use moov-io/fed.
 
 It inspects the file extension and routes to the appropriate parser
 (ack is the first supported format).`,
