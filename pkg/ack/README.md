@@ -8,6 +8,9 @@ This package provides a robust parser for FedACH "FAHK" acknowledgement files
 These files use a custom tagged format that is difficult to parse:
 
 - The file often arrives as one or two extremely long lines (no reliable `\n`).
+- Some samples, including the official Federal Reserve documentation examples,
+  keep one visual row per physical line. `Split` detects that layout and emits
+  one tagged record for each A–Z line so error blocks stay visible.
 - Logical records are identified by a single uppercase letter prefix (`A`–`Z`).
 - Many records are terminated by a `Z` character followed by padding spaces.
 - Error blocks follow `I` → `J` → `K` → `Z` (file-level) and `W` → `X` → `Y` → `Z` (batch-level).

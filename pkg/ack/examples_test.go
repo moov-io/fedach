@@ -1,6 +1,7 @@
 package ack
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,28 +13,28 @@ import (
 // file-multi-batch-level-example) are taken directly from the Federal
 // Reserve's official FAHK documentation. They use real newlines and a
 // "pretty" presentation rather than the flattened single-line format
-// that production ack files arrive in. The parser still processes them
-// (newlines become spaces), and these tests lock in the current behavior
-// with exact literal expectations.
+// that production ack files arrive in. Split detects that layout and
+// emits one tagged record per A-Z line so FindErrorBlocks can surface
+// FILE REJECTED errors. SplitLines reconstructs the visual report rows.
 
 func TestExamples_FileLevelExample(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "ack", "raw", "file-level-example.ack"))
 	require.NoError(t, err)
 
-	// Split produces a single giant record because the input uses
-	// newlines and the internal heuristics are tuned for flattened
-	// production files. We still assert the observable facts exactly.
 	recs := Split(raw)
-	require.Len(t, recs, 1)
+	require.Len(t, recs, 88)
 	require.Equal(t, byte('A'), recs[0].Prefix)
-	require.NotEmpty(t, recs[0].Content)
-	require.Equal(t, byte('A'), recs[0].Content[0])
-	// Key phrases from the official example must be present inside the
-	// collapsed content.
-	content := string(recs[0].Content)
+	require.True(t, bytes.HasPrefix(recs[0].Content, []byte("AJ001A01A08052")))
+
+	// Key phrases from the official example must appear in tagged records.
+	var contents []byte
+	for _, r := range recs {
+		contents = append(contents, r.Content...)
+		contents = append(contents, '\n')
+	}
+	content := string(contents)
 	require.Contains(t, content, "IFH238-INVALID IMMEDIATE ORIGIN NOT AUTHORIZED AS A SENDING POINT")
 	require.Contains(t, content, "IAJ095-EXCEEDED ALLOWED NUMBER OF ITEM REJECTS PER FILE")
-	require.Contains(t, content, "BANK OF TEST")
 	require.Contains(t, content, "FILE ACCEPTED WITH NO ERRORS")
 
 	// SplitLines does a much better job recovering the visual report
@@ -64,16 +65,17 @@ func TestExamples_FileLevelExample(t *testing.T) {
 	require.Equal(t, " BATCHES: 3 DEBIT: $ 0.00", lines[70])
 	require.Equal(t, "************************** END OF ACKNOWLEDGEMENT *************************", lines[80])
 
-	// Error block detection finds nothing because the I/J/K letters
-	// were never promoted to top-level Records by Split on this input.
 	fileErrs, batchErrs := FindErrorBlocks(recs)
-	require.Equal(t, 0, len(fileErrs))
+	require.Equal(t, 2, len(fileErrs))
 	require.Equal(t, 0, len(batchErrs))
+	require.Contains(t, string(fileErrs[0][0].Content), "IFH238")
+	require.Contains(t, string(fileErrs[1][0].Content), "IAJ095")
+	require.Contains(t, FormatErrorBlock(fileErrs[0]), "FH238-INVALID IMMEDIATE ORIGIN")
+	require.Contains(t, FormatErrorBlock(fileErrs[1]), "AJ095-EXCEEDED ALLOWED NUMBER OF ITEM REJECTS")
 
-	// RecordsByPrefix
 	byPrefix := RecordsByPrefix(recs)
-	require.Len(t, byPrefix, 1)
-	require.Len(t, byPrefix['A'], 1)
+	require.Len(t, byPrefix['A'], 4)
+	require.Len(t, byPrefix['I'], 3)
 
 	// FormatErrorBlock on empty inputs
 	require.Equal(t, "", FormatErrorBlock(nil))
@@ -85,12 +87,18 @@ func TestExamples_FileMultiBatchLevelExample(t *testing.T) {
 	require.NoError(t, err)
 
 	recs := Split(raw)
-	require.Len(t, recs, 1)
+	require.Len(t, recs, 142)
 	require.Equal(t, byte('A'), recs[0].Prefix)
-	content := string(recs[0].Content)
+	require.True(t, bytes.HasPrefix(recs[0].Content, []byte("AJ001A01A08052")))
+
+	var contents []byte
+	for _, r := range recs {
+		contents = append(contents, r.Content...)
+		contents = append(contents, '\n')
+	}
+	content := string(contents)
 	require.Contains(t, content, "IBH501-ORIGINATING DFI CANNOT ORIGINATE IN CONTROLLED TEST")
 	require.Contains(t, content, "WBH232-INVALID ORIGINATING DFI IDENTIFICATION NOT AUTHORIZED TO ORIGINATE")
-	require.Contains(t, content, "APPLICATION SUPERVISOR")
 	require.Contains(t, content, "BATCH REJECTED")
 
 	lines := SplitLines(raw)
@@ -136,21 +144,28 @@ func TestExamples_FileMultiBatchLevelExample(t *testing.T) {
 	require.Equal(t, "************************** END OF ACKNOWLEDGEMENT *************************", lines[112])
 
 	fileErrs, batchErrs := FindErrorBlocks(recs)
-	require.Equal(t, 0, len(fileErrs))
-	require.Equal(t, 0, len(batchErrs))
+	require.Equal(t, 4, len(fileErrs))
+	require.Equal(t, 4, len(batchErrs))
+	for i, block := range fileErrs {
+		require.Containsf(t, string(block[0].Content), "IBH501", "file error %d", i)
+	}
+	for i, block := range batchErrs {
+		require.Containsf(t, string(block[0].Content), "WBH232", "batch error %d", i)
+	}
+	require.Contains(t, FormatErrorBlock(fileErrs[0]), "BH501-ORIGINATING DFI CANNOT ORIGINATE IN CONTROLLED TEST")
+	require.Contains(t, FormatErrorBlock(batchErrs[0]), "BH232-INVALID ORIGINATING DFI IDENTIFICATION")
 
 	byPrefix := RecordsByPrefix(recs)
-	require.Len(t, byPrefix, 1)
-	require.Len(t, byPrefix['A'], 1)
+	require.Len(t, byPrefix['A'], 4)
+	require.Len(t, byPrefix['I'], 4)
+	require.Len(t, byPrefix['W'], 4)
 
 	require.Equal(t, "", FormatErrorBlock(nil))
 	require.Equal(t, "", FormatErrorBlock([]Record{}))
 }
 
 // TestExamples_FormatErrorBlock exercises FormatErrorBlock with literal
-// expectations using small hand-constructed blocks (the two official
-// doc files above do not yield extractable error blocks with the
-// current Split heuristics).
+// expectations using small hand-constructed blocks.
 func TestExamples_FormatErrorBlock(t *testing.T) {
 	// Simple file-level error block (I + J + K + Z)
 	block := []Record{

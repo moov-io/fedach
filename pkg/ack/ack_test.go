@@ -341,3 +341,69 @@ func TestSplitLines_GoldenFiles(t *testing.T) {
 		})
 	}
 }
+
+func TestIsNewlineFormatted(t *testing.T) {
+	rawDir := filepath.Join("..", "..", "testdata", "ack", "raw")
+	production := []string{
+		"ACHFAHK673960043AIN202605261654134.ack",
+		"ACHFAHK673960043AIN202605281447969.ack",
+		"ACHFAHK673960043AIN202608121530761.ack",
+		"ACHFAHK673960043AIN202608121534803.ack",
+		"achfahk691000134ain20200512085211052.ack",
+		"achfahk691000134ain20200512085211959.ack",
+	}
+	for _, name := range production {
+		data, err := os.ReadFile(filepath.Join(rawDir, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if isNewlineFormatted(data) {
+			t.Errorf("%s: flattened production file reported as newline-formatted", name)
+		}
+	}
+
+	pretty := []string{
+		"file-level-example.ack",
+		"file-multi-batch-level-example.ack",
+	}
+	for _, name := range pretty {
+		data, err := os.ReadFile(filepath.Join(rawDir, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if !isNewlineFormatted(data) {
+			t.Errorf("%s: documentation sample not reported as newline-formatted", name)
+		}
+	}
+
+	// A short snippet still has enough tagged rows to take the newline path.
+	snippet := []byte(" AJ001A01A08052\nGFILE STATUS: FILE REJECTED\nIFH238-INVALID IMMEDIATE ORIGIN\nJIMMEDIATE ORIGIN = 123456789\nK\nZ\n")
+	if !isNewlineFormatted(snippet) {
+		t.Fatal("short tagged snippet should be newline-formatted")
+	}
+	recs := Split(snippet)
+	if len(recs) != 6 {
+		t.Fatalf("Split(snippet) = %d records, want 6", len(recs))
+	}
+	fileErrs, batchErrs := FindErrorBlocks(recs)
+	if len(fileErrs) != 1 || len(batchErrs) != 0 {
+		t.Fatalf("FindErrorBlocks = %d file, %d batch; want 1 file, 0 batch", len(fileErrs), len(batchErrs))
+	}
+	if got := FormatErrorBlock(fileErrs[0]); !strings.Contains(got, "FH238-INVALID IMMEDIATE ORIGIN") {
+		t.Errorf("FormatErrorBlock = %q, missing FH238 text", got)
+	}
+
+	// A flattened one-line payload must not take the newline path.
+	flat := bytes.Repeat([]byte(" "), 20)
+	flat = append(flat, []byte("IFC104-INCOMPLETE BLOCKING ON FILE")...)
+	flat = append(flat, bytes.Repeat([]byte(" "), 40)...)
+	flat = append(flat, 'J')
+	flat = append(flat, bytes.Repeat([]byte(" "), 40)...)
+	flat = append(flat, 'K')
+	flat = append(flat, bytes.Repeat([]byte(" "), 40)...)
+	flat = append(flat, 'Z')
+	flat = append(flat, bytes.Repeat([]byte(" "), 20)...)
+	if isNewlineFormatted(flat) {
+		t.Fatal("single-line flattened payload reported as newline-formatted")
+	}
+}
