@@ -15,8 +15,9 @@ those reports machine-readable and programmatically usable.
 
 ## Features
 
-- **Robust stage-1 extractor** for noisy, concatenated, or fixed-width tagged
-  report formats (no reliance on `\n` separators)
+- **Robust stage-1 extractor** for flattened production files (one or two
+  long lines, with no reliable `\n` separators) and for newline-formatted
+  Federal Reserve documentation samples
 - **Two-stage architecture**: reliable logical record extraction first,
   semantic/structured parsing later
 - Small, extensible **CLI** that dispatches by file extension

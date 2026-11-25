@@ -471,29 +471,92 @@ func removeTrailingMarker(s string) string {
 	return strings.TrimRight(s, " \t")
 }
 
+// prettyLongLine is longer than any visual row in the Federal Reserve
+// documentation examples and shorter than a flattened production line
+// (those are typically about 4236 bytes).
+const prettyLongLine = 512
+
+// isNewlineFormatted reports whether data looks like a newline-formatted
+// ACK report (one short tagged row per physical line) rather than a
+// flattened production file (one or two very long lines).
+func isNewlineFormatted(data []byte) bool {
+	if bytes.Count(data, []byte{'\n'})+bytes.Count(data, []byte{'\r'}) == 0 {
+		return false
+	}
+
+	hasLong := false
+	shortTagged := 0
+	for _, ln := range bytes.Split(data, []byte{'\n'}) {
+		ln = bytes.TrimRight(ln, "\r \t")
+		if len(bytes.TrimSpace(ln)) == 0 {
+			continue
+		}
+		if len(ln) > prettyLongLine {
+			hasLong = true
+			continue
+		}
+		s := bytes.TrimLeft(ln, " \t")
+		if len(s) > 0 && (isDigit(s[0]) || isUpperLetter(s[0])) {
+			shortTagged++
+		}
+	}
+	if hasLong {
+		return false
+	}
+	return shortTagged >= 3
+}
+
+// splitNewlineFormatted extracts tagged A-Z records from a report that
+// already has one visual row per physical line. Digit-prefixed rows
+// (the 1-9 line-type markers in the Fed documentation examples) are
+// visual indicators, not tagged records, so they are skipped.
+func splitNewlineFormatted(data []byte) []Record {
+	var recs []Record
+	for _, ln := range bytes.Split(data, []byte{'\n'}) {
+		ln = bytes.TrimRight(ln, "\r \t")
+		s := bytes.TrimLeft(ln, " \t")
+		if len(s) == 0 {
+			continue
+		}
+		if isDigit(s[0]) {
+			continue
+		}
+		if !isUpperLetter(s[0]) {
+			continue
+		}
+		content := append([]byte(nil), s...)
+		recs = append(recs, Record{Prefix: content[0], Content: content})
+	}
+	return recs
+}
+
 // Split parses the raw bytes of a FedACH FAHK acknowledgement file and returns
 // the sequence of logical tagged records in file order.
 //
 // The parser is designed to handle:
-//   - Files with no newlines (single long line) or inconsistent line endings.
+//   - Flattened production files with no newlines (one long line) or inconsistent line endings.
+//   - Newline-formatted Federal Reserve documentation samples (one visual row per line).
 //   - Multiple logical records concatenated on one physical line.
 //   - Varying indentation of record prefixes in the original visual layout.
 //   - I/J/K/Z file-level error blocks and W/X/Y/Z batch-level error blocks.
 //   - Z as both a record terminator and (in some cases) a record with content.
 //
-// Splitting strategy (two-phase):
-//  1. The entire input is treated as a single stream; newlines and carriage returns
+// Splitting strategy:
+//  1. Newline-formatted input is split on physical lines. Each line that starts
+//     with an A-Z tag becomes one record. Digit-prefixed line-type markers are skipped.
+//  2. Flattened input is treated as a single stream; newlines and carriage returns
 //     are normalized to spaces for boundary detection purposes.
-//  2. Strong boundaries are located first: every occurrence of 'Z' followed by
-//     5+ whitespace characters and then an uppercase letter A-Z. These Z+padding+letter
-//     sequences are the most reliable record group separators in the FAHK format.
-//  3. Within each segment (initial content up to first strong boundary, and between
+//  3. On flattened input, strong boundaries are located first: every occurrence of
+//     'Z' followed by 5+ whitespace characters and then an uppercase letter A-Z.
+//     These Z+padding+letter sequences are the most reliable record group separators
+//     in the FAHK format.
+//  4. Within each segment (initial content up to first strong boundary, and between
 //     subsequent strong boundaries), we scan for all uppercase letters A-Z that are
 //     not immediately preceded by another letter or digit. These become the tagged
 //     record starts. This catches I/J/K/W/X/Y error-block letters even when they
 //     have low relative indentation.
-//  4. Each record's content runs from its starting letter up to the next record start.
-//  5. The resulting Record keeps the original prefix and a trimmed copy of the
+//  5. Each record's content runs from its starting letter up to the next record start.
+//  6. The resulting Record keeps the original prefix and a trimmed copy of the
 //     content bytes for that logical record.
 //
 // The function is tolerant of extra whitespace and padding. It never returns an error
@@ -501,6 +564,14 @@ func removeTrailingMarker(s string) string {
 func Split(data []byte) []Record {
 	if len(data) == 0 {
 		return nil
+	}
+
+	// Newline-formatted Federal Reserve documentation samples keep one
+	// visual row per physical line. The indent heuristics below are tuned
+	// for flattened production files and collapse those samples into one
+	// record, so handle that layout first.
+	if isNewlineFormatted(data) {
+		return splitNewlineFormatted(data)
 	}
 
 	// Normalize line endings to spaces so we can treat the input as a continuous stream.
